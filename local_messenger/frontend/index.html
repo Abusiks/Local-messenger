@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat</title>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<style>
+/* =========================================
+   RESET
+========================================= */
+
+*{
+    box-sizing:border-box;
+    margin:0;
+    padding:0;
+}
+
+/* =========================================
+   LAYOUT
+========================================= */
+
+body{
+    height:100vh;
+    display:flex;
+    flex-direction:column;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    background:radial-gradient(circle at top,#1f1f1f,#0a0a0a);
+    color:#fff;
+}
+
+#messages{
+    flex:1;
+    overflow-y:auto;
+    padding:16px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+}
+
+.message{
+    max-width:75%;
+    padding:10px 12px;
+    border-radius:16px;
+    background:rgba(255,255,255,.07);
+    backdrop-filter:blur(14px);
+}
+
+.time{
+    font-size:11px;
+    color:#888;
+    margin-top:6px;
+}
+
+#bottom{
+    display:flex;
+    gap:10px;
+    padding:10px;
+    background:rgba(20,20,20,.75);
+}
+
+/* =========================================
+   FORM
+========================================= */
+
+input{
+    flex:1;
+    border:none;
+    border-radius:14px;
+    padding:12px;
+    background:rgba(255,255,255,.08);
+    color:white;
+    outline:none;
+}
+
+button{
+    border:none;
+    border-radius:14px;
+    padding:10px 14px;
+    background:#2a2a2a;
+    color:white;
+    cursor:pointer;
+    transition:.15s;
+}
+
+button:hover{
+    background:#353535;
+}
+
+/* =========================================
+   VOICE SHEET
+========================================= */
+
+#voiceSheet{
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.6);
+    display:none;
+    align-items:flex-end;
+    justify-content:center;
+}
+
+#voiceSheet.active{
+    display:flex;
+}
+
+.sheet{
+    width:100%;
+    max-width:500px;
+    background:#151515;
+    border-radius:20px 20px 0 0;
+    padding:20px;
+    text-align:center;
+}
+
+.wave{
+    display:flex;
+    justify-content:center;
+    gap:4px;
+    margin-bottom:12px;
+}
+
+.bar{
+    width:4px;
+    height:10px;
+    background:#4ea3ff;
+    border-radius:2px;
+    animation:wave 1s infinite;
+}
+
+@keyframes wave{
+    0%,100%{
+        height:10px;
+        opacity:.3;
+    }
+    50%{
+        height:30px;
+        opacity:1;
+    }
+}
+
+.btnRow{
+    display:flex;
+    gap:10px;
+    margin-top:12px;
+}
+
+.cancel{
+    flex:1;
+    padding:14px;
+    background:#ff3b3b;
+}
+
+.send{
+    flex:1;
+    padding:14px;
+    background:#4ea3ff;
+}
+</style>
+</head>
+
+<body>
+
+<div id="messages"></div>
+
+<div id="bottom">
+    <input
+        id="messageInput"
+        placeholder="Сообщение..."
+        autocomplete="off"
+    >
+
+    <input
+        type="file"
+        id="fileInput"
+        hidden
+    >
+
+    <button id="sendBtn">Send</button>
+    <button id="sendFileBtn">Send File</button>
+    <button id="recordBtn">Voice</button>
+</div>
+
+<!-- ======================================
+     VOICE MODAL
+====================================== -->
+
+<div id="voiceSheet">
+    <div class="sheet">
+
+        <div class="wave">
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+        </div>
+
+        <div>Recording...</div>
+
+        <div class="btnRow">
+            <button id="cancelVoice" class="cancel">
+                Cancel
+            </button>
+
+            <button id="sendVoice" class="send">
+                Send
+            </button>
+        </div>
+
+    </div>
+</div>
+
+<script>
+/* =========================================
+   SOCKET
+========================================= */
+
+const socket = io();
+
+/* =========================================
+   DOM
+========================================= */
+
+const elements = {
+    messages: document.getElementById('messages'),
+    input: document.getElementById('messageInput'),
+
+    sendBtn: document.getElementById('sendBtn'),
+
+    fileInput: document.getElementById('fileInput'),
+    sendFileBtn: document.getElementById('sendFileBtn'),
+
+    recordBtn: document.getElementById('recordBtn'),
+
+    voiceSheet: document.getElementById('voiceSheet'),
+    cancelVoice: document.getElementById('cancelVoice'),
+    sendVoice: document.getElementById('sendVoice')
+};
+
+/* =========================================
+   APP STATE
+========================================= */
+
+const state = {
+    mediaRecorder: null,
+    audioChunks: [],
+    recording: false,
+    cancelled: false,
+    stream: null
+};
+
+/* =========================================
+   HELPERS
+========================================= */
+
+function formatTime(timestamp){
+    return new Date(timestamp * 1000)
+        .toLocaleTimeString();
+}
+
+function escapeHtml(text){
+    const div = document.createElement('div');
+    div.innerText = text;
+    return div.innerHTML;
+}
+
+async function upload(url, formData){
+    return fetch(url,{
+        method:'POST',
+        body:formData
+    });
+}
+
+/* =========================================
+   CHAT
+========================================= */
+
+function renderMessage(message){
+
+    const wrapper =
+        document.createElement('div');
+
+    wrapper.className = 'message';
+
+    switch(message.type){
+
+        case 'text':
+
+            wrapper.innerHTML = `
+                <div>${escapeHtml(message.text)}</div>
+                <div class="time">
+                    ${formatTime(message.timestamp)}
+                </div>
+            `;
+
+            break;
+
+        case 'voice':
+
+            wrapper.innerHTML = `
+                <div>🎤 Voice</div>
+
+                <audio
+                    controls
+                    src="${message.url}">
+                </audio>
+
+                <div class="time">
+                    ${formatTime(message.timestamp)}
+                </div>
+            `;
+
+            break;
+    }
+
+    elements.messages.appendChild(wrapper);
+
+    elements.messages.scrollTop =
+        elements.messages.scrollHeight;
+}
+
+function sendMessage(){
+
+    const text =
+        elements.input.value.trim();
+
+    if(!text) return;
+
+    socket.emit('send_message',{
+        text
+    });
+
+    elements.input.value = '';
+}
+
+socket.on('load_history', messages => {
+
+    elements.messages.innerHTML = '';
+
+    messages.forEach(renderMessage);
+});
+
+socket.on('new_message', renderMessage);
+
+/* =========================================
+   FILES
+========================================= */
+
+function initFileUpload(){
+
+    elements.sendFileBtn.addEventListener(
+        'click',
+        () => elements.fileInput.click()
+    );
+
+    elements.fileInput.addEventListener(
+        'change',
+        async () => {
+
+            const file =
+                elements.fileInput.files[0];
+
+            if(!file) return;
+
+            const formData =
+                new FormData();
+
+            formData.append(
+                'file',
+                file
+            );
+
+            await upload(
+                '/upload/file',
+                formData
+            );
+
+            elements.fileInput.value = '';
+        }
+    );
+}
+
+/* =========================================
+   VOICE UI
+========================================= */
+
+function openVoiceSheet(){
+    elements.voiceSheet
+        .classList.add('active');
+}
+
+function closeVoiceSheet(){
+    elements.voiceSheet
+        .classList.remove('active');
+}
+
+/* =========================================
+   VOICE RECORDING
+========================================= */
+
+function cleanupVoice(){
+
+    state.recording = false;
+    state.cancelled = false;
+    state.audioChunks = [];
+
+    elements.recordBtn.textContent =
+        'Voice';
+
+    if(state.stream){
+
+        state.stream
+            .getTracks()
+            .forEach(track => track.stop());
+
+        state.stream = null;
+    }
+
+    state.mediaRecorder = null;
+}
+
+async function startRecording(){
+
+    state.cancelled = false;
+
+    openVoiceSheet();
+
+    state.stream =
+        await navigator
+            .mediaDevices
+            .getUserMedia({
+                audio:true
+            });
+
+    state.mediaRecorder =
+        new MediaRecorder(
+            state.stream
+        );
+
+    state.audioChunks = [];
+
+    state.mediaRecorder.ondataavailable =
+        event => {
+
+            if(!state.cancelled){
+                state.audioChunks.push(
+                    event.data
+                );
+            }
+        };
+
+    state.mediaRecorder.onstop =
+        handleRecordingStop;
+
+    state.mediaRecorder.start();
+
+    state.recording = true;
+
+    elements.recordBtn.textContent =
+        'Stop';
+}
+
+async function handleRecordingStop(){
+
+    closeVoiceSheet();
+
+    if(state.cancelled){
+
+        cleanupVoice();
+        return;
+    }
+
+    const blob =
+        new Blob(
+            state.audioChunks,
+            {
+                type:'audio/webm'
+            }
+        );
+
+    const formData =
+        new FormData();
+
+    formData.append(
+        'voice',
+        blob
+    );
+
+    await upload(
+        '/upload/voice',
+        formData
+    );
+
+    cleanupVoice();
+}
+
+function stopRecording(){
+
+    if(
+        state.mediaRecorder &&
+        state.recording
+    ){
+        state.mediaRecorder.stop();
+    }
+}
+
+function cancelRecording(){
+
+    state.cancelled = true;
+
+    stopRecording();
+
+    closeVoiceSheet();
+
+    cleanupVoice();
+}
+
+/* =========================================
+   EVENTS
+========================================= */
+
+function initEvents(){
+
+    elements.sendBtn.addEventListener(
+        'click',
+        sendMessage
+    );
+
+    elements.input.addEventListener(
+        'keydown',
+        event => {
+
+            if(event.key === 'Enter'){
+                sendMessage();
+            }
+        }
+    );
+
+    elements.recordBtn.addEventListener(
+        'click',
+        async () => {
+
+            if(!state.recording){
+                await startRecording();
+            }else{
+                stopRecording();
+            }
+        }
+    );
+
+    elements.cancelVoice.addEventListener(
+        'click',
+        cancelRecording
+    );
+
+    elements.sendVoice.addEventListener(
+        'click',
+        stopRecording
+    );
+}
+
+/* =========================================
+   INIT
+========================================= */
+
+function init(){
+
+    initFileUpload();
+    initEvents();
+}
+
+init();
+</script>
+
+</body>
+</html>
