@@ -48,6 +48,16 @@ body{
     backdrop-filter:blur(14px);
 }
 
+.message a{
+    color:#4ea3ff;
+    text-decoration:none;
+    word-break:break-all;
+}
+
+.message a:hover{
+    text-decoration:underline;
+}
+
 .time{
     font-size:11px;
     color:#888;
@@ -291,6 +301,26 @@ function renderMessage(message){
 
             wrapper.innerHTML = `
                 <div>${escapeHtml(message.text)}</div>
+                <div class="time">
+                    ${formatTime(message.timestamp)}
+                </div>
+            `;
+
+            break;
+
+        case 'file':
+
+            wrapper.innerHTML = `
+                <div>📎 File</div>
+
+                <a
+                    href="${message.url}"
+                    download="${escapeHtml(message.filename)}"
+                    target="_blank"
+                >
+                    ${escapeHtml(message.filename)}
+                </a>
+
                 <div class="time">
                     ${formatTime(message.timestamp)}
                 </div>
