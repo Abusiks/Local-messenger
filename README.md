@@ -34,15 +34,15 @@ openssl version
 
 Если не установлен:
 
-Windows: 
+# Windows: 
 
 https://slproweb.com/products/Win32OpenSSL.html
 
-macOS: 
+# macOS: 
 
 brew install openssl
 
-Linux:
+# Linux:
 
 sudo apt update
 
